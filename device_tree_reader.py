@@ -8,9 +8,9 @@ import pprint
 #from treelib import Tree, Node
 from anytree import Node, RenderTree, NodeMixin, PreOrderIter
 
-from typing import Union, List
+from typing import Union, List, Iterator, AnyStr
 
-DEBUG=False
+DEBUG = False
 
 class Token:
 
@@ -64,38 +64,125 @@ class State(Enum):
     Array = auto() # inside an array ( <one two three ... > )
 
 class Regex:
-    include_same_dir    = re.compile(r'#include +"(?P<file_path>[^"]+?)"') # group 0: path and file name with extension
-    include_default_dir = re.compile(r'#include +<(?P<file_path>[^>]+?)>') # group 0: path and file name with extension
-    
+    include_same_dir    = r'#include +"(?P<file_path>[^"]+?)"' # group 0: path and file name with extension
+    include_default_dir = r'#include +<(?P<file_path>[^>]+?)>' # group 0: path and file name with extension
+
     valid_node_name = r'[\w,\.\+-]+'
     valid_property_name = r'[\w,\.\+\?#-]+'
 
-    boring = re.compile(r'^\s*$')
+    boring = r'^\s*$'
 
-    root_node = re.compile(r'/ {')
+    root_node = r'/ {'
 
-    node = re.compile(f'(?P<name>{valid_node_name})(?:@(?P<value>{valid_node_name})) +{{')
-    
-    
+    node = f'(?P<name>{valid_node_name})(?:@(?P<value>{valid_node_name})) +{{'
+
+    multiline_comment = r'/\*(?:[^/*][^*]*\*+)*/'
+    '''inspired by https://stackoverflow.com/a/36328890/6609908'''
+
+
+
+
+class StringProperty(str):
+    '''string-property = "a string";'''
+    pass
+
+class StringListProperty(List[str]):
+    '''string-list = "red fish", "blue fish";'''
+    pass
+
+class CellProperty(List[Union[int, str]]):
+    '''cell-property = <0xbeef 123 0xabcd1234>;'''
+    pass
+
+class BinaryProperty(List[int]):
+    '''binary-property = [0x01 0x23 0x45 0x67];'''
+    pass
+
+class EmptyProperty(str):
+    '''wakeup-source;'''
+    pass
+
+class MixedProperty(List[Union[StringProperty, CellProperty, BinaryProperty]]):
+    '''mixed-property = "a string", [0x01 0x23 0x45 0x67], <0x12345678>;'''
+    def get_type_info(self):
+        type_list = [type(element) for element in self]
+        return type_list
+
+NodePropertyValue = Union[StringProperty,
+                          CellProperty,
+                          BinaryProperty,
+                          MixedProperty,
+                          StringListProperty,
+                          MixedProperty]
+
+class ValueElement:
+    def __init__(self, value:NodePropertyValue, file_path:Path, line_number:List[int], key_span:List[int], value_span:List[int]):
+        self.value:NodePropertyValue = value
+        self.file_path:Path = file_path
+        self.line_number:List[int] = line_number
+        self.single_line:bool = len(line_number) == 1
+        self.key_span:List[int] = key_span
+        self.value_span:List[int] = value_span
+
+
+class DeviceTreeNodeProperty:
+
+    def __init__(self, name:str, value:NodePropertyValue, file_path:Path, line_number:List[int], key_span:List[int], value_span:List[int]):
+        self._name:str = name
+        self._value:NodePropertyValue = value
+        self._history_list:List = [ValueElement(self._value, file_path, line_number, key_span, value_span)]
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def value(self):
+        return self._value
+
+    def set_value(self, value:NodePropertyValue, file_path:Path, line_number:List[int], key_span:List[int], value_span:List[int]):
+        if isinstance(value, self.type):
+            self._value = self._value
+            self._history_list.append(ValueElement(self._value, file_path, line_number, key_span, value_span))
+        else:
+            raise TypeError(f'The property {self._name} was created as {self.type}, but the new value {value} is of type {type(value)}!')
+
+    @property
+    def type(self):
+        return type(self._value)
+
+    @property
+    def history_list(self):
+        return self._history_list
+
+    def __repr__(self):
+        return f'{self.name} - {repr(self.value)}'
+
+# TODO: DeviceTree class? to register all phandles & nodes, all source files & nodes, ...
+
 class DeviceTreeNode(NodeMixin):
 
-    StringProperty = str
-    '''string-property = "a string";'''
-    CellProperty = List[int]
-    '''cell-property = <0xbeef 123 0xabcd1234>;'''
-    BinaryProperty = List[int]
-    '''binary-property = [0x01 0x23 0x45 0x67];'''
-    MixedProperty = List[Union[StringProperty, BinaryProperty, CellProperty]] # not supported
-    '''mixed-property = "a string", [0x01 0x23 0x45 0x67], <0x12345678>;'''
-    StringListProperty = List[str]
-    '''string-list = "red fish", "blue fish";'''
-    EmptyProperty = bool
-    '''wakeup-source;'''
-
-    #TODO: remove the default file_path_source
+    # TODO: remove the default file_path_source
     def __init__(self, name:str, is_overlay:bool=False, file_path_source:Path=Path(), phandle:str=None, at:Union[str,int]=None, parent=None, children=None):
+        """
+
+        @param name: name of the node in this this case: "phandle: name@reg" ; or in this case: "&name"
+        @type name: str
+        @param is_overlay: for the "&name" case, is_overlay must be true
+        @type is_overlay: bool
+        @param file_path_source: the source file responsible for this "instance" of this node
+        @type file_path_source: Path
+        @param phandle: the phandle for this node
+        @type phandle: str
+        @param at: the reg for this node
+        @type at: int
+        @param parent: this node's parent node. for the root node (/), the parent is None
+        @type parent: dunno
+        @param children: children node of this node
+        @type children: dunno
+        """
         if is_overlay and (phandle or at):
-            raise ValueError('An overlay can not have a phandle nor an at (@) value! (or can it?)')
+            raise ValueError('An overlay can not have a phandle nor an at (@) value! (or can it?)\nFor an overlay node, the "&node_name" is its name! ')
         else:
             self._at = at
             self._phandle = phandle
@@ -112,14 +199,33 @@ class DeviceTreeNode(NodeMixin):
         self.parent = parent
         self.children = [] if children == None else children
 
-    def add_property(self, name:str, value:Union[StringProperty,CellProperty, BinaryProperty, MixedProperty, StringListProperty]) -> None:
-        if name in self._properties.keys():
+    def add_property(self, name:str, value:NodePropertyValue, file_source:Path,
+                     line_number:List[int], key_span:List[int], value_span:List[int]) -> None:
+        """
+
+        @param name: the name of the property
+        @type name: str
+        @param value: the value of the property
+        @type value: NodePropertyValue
+        @param file_source: the source file responsible for this property's value
+        @type file_source: Path
+        @param line_number: the first [and maybe last] line in the source file that this property and its value are
+        @type line_number: List[int]
+        @param key_span: position of the key's first char in this source file and also the one past key's last char
+        @type key_span: List[int]
+        @param value_span: position of the value's first char in this source file and also the one past value's last char
+        @type value_span: List[int]
+        @return: Nothing. It just adds (creates) the property
+        @rtype: None
+        """
+
+        if name in self._properties:
             raise KeyError(f'Property {name} already exist!')
         else:
-            self._properties[name] = value
+            self._properties[name] = DeviceTreeNodeProperty(name, value, file_source, line_number, key_span, value_span)
 
     def modify_property(self, name:str, value:Union[str,None]) -> None:
-        if not name in self._properties.keys():
+        if not name in self._properties:
             raise KeyError(f'Property {name} can not be modified because it does not exist yet!')
         else:
             self._properties[name] = value
@@ -175,15 +281,21 @@ class DeviceTreeNode(NodeMixin):
         if self._is_overlay:
             string = f'{string} - overlay'
 
-        string = f'{string} - {self._properties}'
-        string = f'{string} - <{self._properties_span[0]}, {self._properties_span[1]}>'
+        string = f'{string}\n\t<{self._properties_span[0]}, {self._properties_span[1]}>'
+        properties_part = '\n\t'.join([f'{k} - {v}' for k,v in self._properties.items()])
+        string = f'{string}\n\t{properties_part}'
 
         return string
 
+
 def get_line_number(text_contents):
-    return len(text_contents.split('\n'))
+    if len(text_contents) == 0:
+        return 0
+    else:
+        return 1+len(text_contents.split('\n'))
 
 def parse_device_tree(file_path:Path) -> None:
+    global DEBUG
     if not file_path.exists():
         raise FileExistsError(f"{file_path} does not exist!")
 
@@ -192,8 +304,8 @@ def parse_device_tree(file_path:Path) -> None:
 
     with open(file_path, 'r') as f:
         contents = f.read()
-    
-    root_node:re.Match=Regex.root_node.search(contents)
+
+    root_node:re.Match=re.search(Regex.root_node, contents)
 
     if root_node == None:
         raise ValueError(f'Root node ( / ) could not be found in {file_path}!')
@@ -233,6 +345,7 @@ def parse_device_tree(file_path:Path) -> None:
             '''here we have the start of a node'''
             node_count+=1
 
+            # this is needed because of the pop below
             node_header = match.groupdict()
             if node_header['phandle_only'] == None:
                 '''this not is not an overlay node'''
@@ -251,10 +364,10 @@ def parse_device_tree(file_path:Path) -> None:
 
                 '''grabbing the start of the node property (it is the first character that indicates a property)'''
                 carret_position = match.span()[1]
-                while contents[carret_position] == ' ' or contents[carret_position] == '\t' or contents[carret_position] == '\n':
-                    carret_position += 1
-                    if carret_position > len(contents):
-                        raise ValueError(f'Reached End Of File {file_path}!')
+                #while contents[carret_position] == ' ' or contents[carret_position] == '\t' or contents[carret_position] == '\n':
+                #    carret_position += 1
+                #    if carret_position > len(contents):
+                #        raise ValueError(f'Reached End Of File {file_path}!')
                 current_node.set_properties_span_start(carret_position)
                 if DEBUG:
                     if contents[current_node.get_properties_span()[0]] == '\n':
@@ -278,10 +391,10 @@ def parse_device_tree(file_path:Path) -> None:
                     root_nodes.append(current_node)
                     current_node.set_node_span_start(match.span()[1])
                     carret_position = match.span()[1]
-                    while contents[carret_position] == ' ' or contents[carret_position] == '\t' or contents[carret_position] == '\n':
-                        carret_position += 1
-                        if carret_position > len(contents):
-                            raise ValueError(f'Reached End Of File {file_path}!')
+                    # while contents[carret_position] == ' ' or contents[carret_position] == '\t' or contents[carret_position] == '\n':
+                    #     carret_position += 1
+                    #     if carret_position > len(contents):
+                    #         raise ValueError(f'Reached End Of File {file_path}!')
                     current_node.set_properties_span_start(carret_position)
                     if DEBUG:
                         if contents[current_node.get_properties_span()[0]] == '\n':
@@ -296,7 +409,7 @@ def parse_device_tree(file_path:Path) -> None:
                         pre='.'*t
 
 
-        elif match[0] == '};' and match.groupdict()['name'] == None:
+        elif match[0] == '};' and match['name'] == None:
             if DEBUG:
                 t-=1
                 pre='.'*t
@@ -331,79 +444,156 @@ def parse_device_tree(file_path:Path) -> None:
     print('\n\nproperties time\n\n')
 
     for root in root_nodes:
+        '''tree by tree'''
         node:DeviceTreeNode
         for node in PreOrderIter(root):
-
+            '''node by node'''
             if DEBUG:
                 print(f'==|{node.name}|==')
 
-            # TODO: find a way to not lose the original position of each thing in the original file!!!
-            index_first_char = get_line_number(contents[:node.get_properties_span()[0]])
-            w=20
-            print(f'{index_first_char:{w-10}} {node.name:{w}} {contents[node.get_properties_span()[0]:node.get_properties_span()[0]+10]:{w}}')
             properties_lines = contents[node.get_properties_span()[0]:node.get_properties_span()[1]] # getting online the properties
-            properties_lines = re.sub(r'/\*[^*/]*\*/','', properties_lines) # removing multiline comments
-            properties_lines = re.sub(r'//[^\n]*','', properties_lines) # removing dingle line comments
-            properties_lines = re.sub(r'\n','', properties_lines) # removing linefeed (maybe it is not reeeally needed)
-            properties_lines = [p.strip() for p in properties_lines.split(";")] # splitting by the end of statements (? expressions ?)
-            properties_lines = [p for p in properties_lines if len(p) > 0] # removing 0-length strings
+            # TODO: find a way to not lose the original position of each thing in the original file!!!
 
-            for line in properties_lines:
-                if len(line) == 0:
-                    '''not considering 0-length strings'''
-                    raise ValueError('We are still getting 0-length strings...')
+            carret_position = node.get_properties_span()[0]
+            '''curernt carret position in our analysis'''
+
+            # TODO: update this value with the line number of each property of each node (currently, it only stores the line number of the first property of the current node)
+            line_number_offset = get_line_number(contents[:carret_position])
+            '''curernt line number in our analysis'''
+
+            DEBUG = True
+            if DEBUG:
+                w=20
+                print(f'{line_number_offset:{w-10}} {node.name:{w}} {properties_lines[:10]:{w}}')
+            DEBUG=False
+            '''a big problem: some lengthy properties (like cell properties) usually are broken in several lines'''
+
+            #properties_lines = re.sub(r'/\*[^*/]*\*/','', properties_lines) # removing multiline comments
+            #properties_lines = re.sub(r'//[^\n]*','', properties_lines) # removing dingle line comments
+            #properties_lines = re.sub(r'\n','', properties_lines) # removing linefeed (maybe it is not reeeally needed)
+
+            '''problem in the line below: by splitting the string, we lose track of position in the whole file.
+            I could manually keep track of it, but ain't nobody got time for this.
+            by using only regexp, it is easier solved (go to branch properties-by-regexp)'''
+
+            # device tree specification v0.3 (13/feb/2020): https://github.com/devicetree-org/devicetree-specification/releases/tag/v0.3
+            # property names : section 2.2.4 : [\w,.+?#\-]+
+
+            key_value_property:Iterator[re.Match[AnyStr]] = re.finditer(r'\n\s*(?P<key>[\w,.+?#\-]+)\s*=\s*(?P<value>[^;]+);', properties_lines)
+            '''this a property like <key = value>, regardless of being spread in more than on line or note'''
+
+            for property_match in key_value_property:
+                key = property_match['key']
+                key_span = [property_match.start('key')+carret_position, property_match.end('key')+carret_position]
+                value = property_match['value']
+                value_span = [property_match.start('value')+carret_position, property_match.end('value')+carret_position]
+                # if DEBUG:
+                #     print(f'key  : %{key}%')
+                #     print(f'value: %{value}%')
+
+                # TODO: this matches any property (empty or not, multi-line or not), except MIXED PROPERTIES!
+                '''
+                ^\s*(([\w\-]+)|([#\w\-,]+\s*=\s*(?:("[^"]*"(\s*,\s*"[^"]*")*?)|(<[^;]*>)|(&[^;]*))));
+                '''
+
+                string_property = re.match(r'^"([^\n;"]*)"$', value)
+                if string_property:
+                    if DEBUG:
+                        print('single string', value)
+                        print(f'        |{string_property.groups()[0]}| span: {value_span}, line: {line_number_offset}')
+
+                    node.add_property(key, value, file_path, [line_number_offset], key_span, value_span)
                     continue
-                else:
-                    if '=' in line:
-                        '''it is a line with a key = value'''
-                        key, value = [e.strip() for e in line.split('=')]
-                        #print(f'|{key}| -- |{value}| -- ', end='')
-                        if DEBUG:
-                            print(f'    |{key}| -- ', end='')
-                        string_property = re.match(r'^"([^\n;"]*)"$', value)
-                        if string_property:
-                            if DEBUG:
-                                print('single string')
-                                print(f'        |{string_property.groups()[0]}|')
-                            node.add_property(key, value)
-                            continue
 
-                        string_list = re.match(r'^("[^\n;"]*"\s*,\s*?)+"[^\n;"]*"$', value)
-                        if string_list:
-                            strings = re.findall(r'"([^\n;"]*)"', value)
-                            node.add_property(key, list(strings))
-                            if DEBUG:
-                                print('multi string')
-                                for s in strings:
-                                    print(f'        |{s.groups()[0]}|')
-                            continue
+                string_list = re.match(r'^("[^\n;"]*"\s*,\s*?)+"[^\n;"]*"$', value)
+                if string_list:
+                    strings = re.findall(r'"([^\n;"]*)"', value)
+                    node.add_property(key, StringProperty(strings), file_path, [line_number_offset], key_span, value_span)
+                    if DEBUG:
+                        print('multi string')
+                        for s in strings:
+                            print(f'        |{s}|')
+                    continue
 
-                        cell = re.match(r'^<((?:&?[\w]+\s*)+)>$', value)
-                        if cell:
-                            elements = cell.groups()[0].split()
-                            if DEBUG:
-                                print('cell')
-                                for e in elements:
-                                    print(f'        |{e}|')
-                            continue
+                # cell = re.match(r'^<\s*((?:&?[\w]+\s*)+)>$', value) # this one causes catastrophic backtracking for, e.g., "<0x00010081 0x00000000 0x04000000 0x00000000 0x04000040 0x00000000>, <0>"
+                # references:
+                # https://javascript.info/regexp-catastrophic-backtracking
+                # https://www.regular-expressions.info/catastrophic.html
+                # my solution: according to https://javascript.info/regexp-catastrophic-backtracking#how-to-fix (great article. a little hard to understand backtracking btw :) )
+                # cell = re.match(r'^<\s*(?:(?:&?[\w]+\s+)+&?[\w]+\s*)>$', value) # this one causes catastrophic backtracking for, e.g., "<0x00010081 0x00000000 0x04000000 0x00000000 0x04000040 0x00000000>, <0>"
+                # simplifying:
+                cell = re.match(r'^<([^>]+)>\s*$', value)
 
-                        alias = re.match(r'^(&[\w]+)$', value)
-                        if alias:
-                            if DEBUG:
-                                print('alias')
-                                print(f'        |{alias.groups()[0]}|')
+                if cell:
+                    # TODO: maybe remember (store somewhere) if an integer value was represented as hexa or as decimal?
+                    elements = cell[1].split()
+                    for i in range(len(elements)):
+                        if elements[i][0:2] == '0x' or elements[i][0:2] == '0X':
+                            elements[i] = int(elements[i], 16)
+                        else:
+                            try:
+                                elements[i] = int(elements[i], 10)
+                            except ValueError:
+                                elements[i] = str(elements[i])
+                            except:
+                                raise ValueError(f'It is not an hexa int, dec int, nor str... WHAT IS THIS? Value: {elements[i]}')
 
-                    else:
-                        '''this line is just a binary-property (like wakeup-source or interrupt-controller)'''
-                        binary_property = re.match(r'^\[(?:\s*([a-fA-F0-9xX]+)\s*)+\]$', value)
-                        if binary_property:
-                            elements = re.finditer(r'([a-fA-F0-9xX]+)', value)
-                            if DEBUG:
-                                print('array')
-                                for e in elements:
-                                    print(f'        |{e.groups()[0]}|')
-                            continue
+                    node.add_property(key, CellProperty(elements), file_path, [line_number_offset], key_span, value_span)
+                    if DEBUG:
+                        print('cell')
+                        for e in elements:
+                            print(f'        |{e}|')
+                    continue
 
+                # TODO: grab the aliases
+                alias = re.match(r'^(&[\w]+)$', value)
+                if alias:
+                    if DEBUG:
+                        print('alias')
+                        print(f'        |{alias.groups()[0]}|')
+                    continue
+
+                #mixed_property = re.finditer(r'(?:(?P<cell><\s*(?:(?:\s*&)?\w+\s*)+>)|(?P<string>"(?:[^\n;"]*)"\s*)|(?P<string_list>(?:"[^\n;"]*"\s*,\s*?)+"[^\n;"]*")|(?P<binary>\[\s*(?:(?:(?:0[xX][\dA-Fa-f]+)|(?:\d+))\s*)+\]))', value)
+                mixed_property = re.finditer(r'(?:(?P<cell><\s*(?:(?:\s*&)?\w+\s*)+>)|(?P<string>"(?:[^\n;"]*)"\s*)|(?P<binary>\[\s*(?:(?:(?:0[xX][\dA-Fa-f]+)|(?:\d+))\s*)+\]))',
+                                             value)
+                if mixed_property:
+                    auxMixedProperty:MixedProperty = MixedProperty()
+                    current_property = None
+                    for p in mixed_property:
+                        if sum([0 if v==None else 1 for v in p.groupdict().values()]) > 1:
+                            raise ValueError(f'More than one type (string and/or cell and/or binary) found: {[f"{k}: {v}" for k,v in p.groupdict().items() if not v == None]}')
+                        elif not p['cell'] == None:
+                            current_property = CellProperty([p['cell']])
+                        elif not p['string'] == None:
+                            current_property = StringProperty(p['string'])
+                        elif not p['binary'] == None:
+                            current_property = BinaryProperty(p['binary'])
+                        else:
+                            raise f"Something is wrong! None of cell, string or binary. What is this?? value: {p[0]}"
+
+                        auxMixedProperty.append(current_property)
+
+                    node.add_property(key, auxMixedProperty, file_path, [line_number_offset], key_span, value_span)
+                    continue
+
+                raise ValueError(f'''
+                   If you got here, something if wrong or is not supported.
+                   Current line number: {line_number_offset}
+                   Current carret: {carret_position}
+                   Current content: {property_match[0]}')
+                   ''')
+            DEBUG=False
+
+            empty_property:Iterator[re.Match[str]] = re.finditer(r'\n\s*(?P<property>[\w,.+?#\-]+);', properties_lines)
+            '''it is an empty property (like wakeup-source)'''
+            for property_match in empty_property:
+                if DEBUG:
+                    print(f'={property_match[0]}= EMPTY')
+                continue
+
+
+    for rn in root_nodes:
+        print(RenderTree(rn))
 
 if __name__ == "__main__":
     # parse_device_tree(Path("/home/grilo/linux-toradex/arch/arm/boot/dts/imx6qdl.dtsi"))
