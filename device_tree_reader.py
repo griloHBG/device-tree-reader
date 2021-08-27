@@ -626,12 +626,18 @@ def parse_device_tree(file_path:Path) -> None:
                    ''')
             DEBUG=False
 
-            empty_property:Iterator[re.Match[str]] = re.finditer(r'\n\s*(?P<property>[\w,.+?#\-]+);', properties_lines)
+            empty_property:Iterator[re.Match[str]] = re.finditer(r'\n\s*(?P<property_name>[\w,.+?#\-]+);', properties_lines)
             '''it is an empty property (like wakeup-source)'''
             for property_match in empty_property:
+
                 if DEBUG:
                     print(f'={property_match[0]}= EMPTY')
-                continue
+
+                property_name = property_match['property_name']
+                property_span = [property_match.start('property_name')+carret_position, property_match.end('property_name')+carret_position]
+                line_number_span = [line_number_offset + get_line_number(properties_lines[:property_match.start('property_name')]) -1,
+                                    line_number_offset + get_line_number(properties_lines[:property_match.end('property_name')-1]) -1]
+                node.add_property(property_name, EmptyProperty(), file_path, line_number_span, property_span, property_span)
 
 
     for rn in root_nodes:
