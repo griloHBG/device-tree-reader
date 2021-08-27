@@ -492,12 +492,10 @@ def parse_device_tree(file_path:Path) -> None:
                 print(f'==|{node.name}|==')
 
             properties_lines = contents[node.get_properties_span()[0]:node.get_properties_span()[1]] # getting online the properties
-            # TODO: find a way to not lose the original position of each thing in the original file!!!
 
             carret_position = node.get_properties_span()[0]
             '''curernt carret position in our analysis'''
 
-            # TODO: update this value with the line number of each property of each node (currently, it only stores the line number of the first property of the current node)
             line_number_offset = get_line_number(contents[:carret_position-1])
             '''curernt line number in our analysis'''
 
@@ -529,14 +527,9 @@ def parse_device_tree(file_path:Path) -> None:
                 value_span = [property_match.start('value')+carret_position, property_match.end('value')+carret_position]
                 line_number_span = [line_number_offset + get_line_number(properties_lines[:property_match.start('key')]) -1,
                                     line_number_offset + get_line_number(properties_lines[:property_match.end('value')-1]) -1]
-                # if DEBUG:
-                #     print(f'key  : %{key}%')
-                #     print(f'value: %{value}%')
-
-                # TODO: this matches any property (empty or not, multi-line or not), except MIXED PROPERTIES!
-                '''
-                ^\s*(([\w\-]+)|([#\w\-,]+\s*=\s*(?:("[^"]*"(\s*,\s*"[^"]*")*?)|(<[^;]*>)|(&[^;]*))));
-                '''
+                if DEBUG:
+                    print(f'key  : %{key}%')
+                    print(f'value: %{value}%')
 
                 string_property = re.match(r'^"([^\n;"]*)"$', value)
                 if string_property:
