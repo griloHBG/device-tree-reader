@@ -595,6 +595,7 @@ def parse_device_tree(file_path:Path) -> None:
                     auxMixedProperty:MixedProperty = MixedProperty()
                     current_property = None
                     for p in mixed_property:
+                        #TODO every property in here is being created from strings. Not good!
                         if sum([0 if v==None else 1 for v in p.groupdict().values()]) > 1:
                             raise ValueError(f'More than one type (string and/or cell and/or binary) found: {[f"{k}: {v}" for k,v in p.groupdict().items() if not v == None]}')
                         elif not p['cell'] == None:
