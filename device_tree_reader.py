@@ -292,7 +292,7 @@ def get_line_number(text_contents):
     if len(text_contents) == 0:
         return 0
     else:
-        return 1+len(text_contents.split('\n'))
+        return 1+text_contents.count('\n')
 
 def parse_device_tree(file_path:Path) -> None:
     global DEBUG
@@ -458,7 +458,7 @@ def parse_device_tree(file_path:Path) -> None:
             '''curernt carret position in our analysis'''
 
             # TODO: update this value with the line number of each property of each node (currently, it only stores the line number of the first property of the current node)
-            line_number_offset = get_line_number(contents[:carret_position])
+            line_number_offset = get_line_number(contents[:carret_position-1])
             '''curernt line number in our analysis'''
 
             DEBUG = True
@@ -479,7 +479,7 @@ def parse_device_tree(file_path:Path) -> None:
             # device tree specification v0.3 (13/feb/2020): https://github.com/devicetree-org/devicetree-specification/releases/tag/v0.3
             # property names : section 2.2.4 : [\w,.+?#\-]+
 
-            key_value_property:Iterator[re.Match[AnyStr]] = re.finditer(r'\n\s*(?P<key>[\w,.+?#\-]+)\s*=\s*(?P<value>[^;]+);', properties_lines)
+            key_value_property:Iterator[re.Match[AnyStr]] = re.finditer(r'(?P<key>[\w,.+?#\-]+)\s*=\s*(?P<value>[^;]+);', properties_lines)
             '''this a property like <key = value>, regardless of being spread in more than on line or note'''
 
             for property_match in key_value_property:
@@ -487,6 +487,8 @@ def parse_device_tree(file_path:Path) -> None:
                 key_span = [property_match.start('key')+carret_position, property_match.end('key')+carret_position]
                 value = property_match['value']
                 value_span = [property_match.start('value')+carret_position, property_match.end('value')+carret_position]
+                line_number_span = [line_number_offset + get_line_number(properties_lines[:property_match.start('key')]) -1,
+                                    line_number_offset + get_line_number(properties_lines[:property_match.end('value')-1]) -1]
                 # if DEBUG:
                 #     print(f'key  : %{key}%')
                 #     print(f'value: %{value}%')
@@ -502,13 +504,13 @@ def parse_device_tree(file_path:Path) -> None:
                         print('single string', value)
                         print(f'        |{string_property.groups()[0]}| span: {value_span}, line: {line_number_offset}')
 
-                    node.add_property(key, value, file_path, [line_number_offset], key_span, value_span)
+                    node.add_property(key, value, file_path, line_number_span, key_span, value_span)
                     continue
 
                 string_list = re.match(r'^("[^\n;"]*"\s*,\s*?)+"[^\n;"]*"$', value)
                 if string_list:
                     strings = re.findall(r'"([^\n;"]*)"', value)
-                    node.add_property(key, StringProperty(strings), file_path, [line_number_offset], key_span, value_span)
+                    node.add_property(key, StringProperty(strings), file_path, line_number_span, key_span, value_span)
                     if DEBUG:
                         print('multi string')
                         for s in strings:
@@ -538,7 +540,7 @@ def parse_device_tree(file_path:Path) -> None:
                             except:
                                 raise ValueError(f'It is not an hexa int, dec int, nor str... WHAT IS THIS? Value: {elements[i]}')
 
-                    node.add_property(key, CellProperty(elements), file_path, [line_number_offset], key_span, value_span)
+                    node.add_property(key, CellProperty(elements), file_path, line_number_span, key_span, value_span)
                     if DEBUG:
                         print('cell')
                         for e in elements:
@@ -573,7 +575,7 @@ def parse_device_tree(file_path:Path) -> None:
 
                         auxMixedProperty.append(current_property)
 
-                    node.add_property(key, auxMixedProperty, file_path, [line_number_offset], key_span, value_span)
+                    node.add_property(key, auxMixedProperty, file_path, line_number_span, key_span, value_span)
                     continue
 
                 raise ValueError(f'''
