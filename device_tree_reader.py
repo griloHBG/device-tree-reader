@@ -30,7 +30,7 @@ class Token:
     overlay = r'/plugin/'
 
     root_node = r'/'
-    
+
     start_node = r'{'
     end_node = r'}'
 
@@ -84,23 +84,62 @@ class Regex:
 
 class StringProperty(str):
     '''string-property = "a string";'''
-    pass
+    def __init__(self, value:str):
+        self._value:str = value
 
-class StringListProperty(List[str]):
+    def __repr__(self):
+        return self._value
+
+class StringListProperty():
     '''string-list = "red fish", "blue fish";'''
-    pass
+    def __init__(self, value:List[str]):
+        self._value:List[str] = value
 
-class CellProperty(List[Union[int, str]]):
+    def __repr__(self):
+        return self._value
+
+    def __getitem__(self, key:int):
+        return self._value[key]
+
+    def __setitem__(self, key:int, value:List[str]):
+        self._value[key] = value
+
+class CellProperty():
     '''cell-property = <0xbeef 123 0xabcd1234>;'''
-    pass
+    def __init__(self, value:List[Union[int, str]]):
+        self._value:List[Union[int, str]] = value
+
+    def __repr__(self):
+        return repr(self._value)
+
+    def __getitem__(self, key:int):
+        return self._value[key]
+
+    def __setitem__(self, key:int, value:List[Union[int, str]]):
+        self._value[key] = value
 
 class BinaryProperty(List[int]):
     '''binary-property = [0x01 0x23 0x45 0x67];'''
+    def __init__(self, value:List[int]):
+        self._value:List[int] = value
+
+    def __repr__(self):
+        return self._value
+
+    def __getitem__(self, key:int):
+        return self._value[key]
+
+    def __setitem__(self, key:int, value:List[int]):
+        self._value[key] = value
     pass
 
-class EmptyProperty(str):
+class EmptyProperty():
     '''wakeup-source;'''
-    pass
+    def __init__(self):
+        self.status = True
+
+    def __bool__(self):
+        return self.status
 
 class MixedProperty(List[Union[StringProperty, CellProperty, BinaryProperty]]):
     '''mixed-property = "a string", [0x01 0x23 0x45 0x67], <0x12345678>;'''
@@ -113,7 +152,8 @@ NodePropertyValue = Union[StringProperty,
                           BinaryProperty,
                           MixedProperty,
                           StringListProperty,
-                          MixedProperty]
+                          MixedProperty,
+                          EmptyProperty]
 
 class ValueElement:
     def __init__(self, value:NodePropertyValue, file_path:Path, line_number:List[int], key_span:List[int], value_span:List[int]):
@@ -156,7 +196,7 @@ class DeviceTreeNodeProperty:
         return self._history_list
 
     def __repr__(self):
-        return f'{self.name} - {repr(self.value)}'
+        return f'{self.name} - {self._value}'
 
 # TODO: DeviceTree class? to register all phandles & nodes, all source files & nodes, ...
 
@@ -250,7 +290,7 @@ class DeviceTreeNode(NodeMixin):
             raise ValueError(f'Node already has an @ {self._at} !')
         else:
             self._at = at
-    
+
     def get_at(self) -> Union[str, int]:
         return self._at
 
@@ -282,7 +322,7 @@ class DeviceTreeNode(NodeMixin):
             string = f'{string} - overlay'
 
         string = f'{string}\n\t<{self._properties_span[0]}, {self._properties_span[1]}>'
-        properties_part = '\n\t'.join([f'{k} - {v}' for k,v in self._properties.items()])
+        properties_part = '\n\t'.join([f'{v}' for v in self._properties.values()])
         string = f'{string}\n\t{properties_part}'
 
         return string
