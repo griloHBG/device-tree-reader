@@ -291,7 +291,8 @@ class DeviceTreeNode(NodeMixin):
     #     else:
     #         self._phandle = phandle
 
-    def get_phandle(self) -> Union[str, int]:
+    @property
+    def phandle(self) -> str:
         return self._phandle
 
     def set_at(self, at:Union[str,int]) -> None:
