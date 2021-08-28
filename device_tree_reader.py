@@ -147,13 +147,22 @@ class MixedProperty(List[Union[StringProperty, CellProperty, BinaryProperty]]):
         type_list = [type(element) for element in self]
         return type_list
 
+class AliasProperty():
+    '''&phandle;'''
+    def __init__(self, value:str):
+        self._value:str = value
+
+    def __repr__(self):
+        return self._value
+
 NodePropertyValue = Union[StringProperty,
                           CellProperty,
                           BinaryProperty,
                           MixedProperty,
                           StringListProperty,
                           MixedProperty,
-                          EmptyProperty]
+                          EmptyProperty,
+                          AliasProperty]
 
 class ValueElement:
     def __init__(self, value:NodePropertyValue, file_path:Path, line_number:List[int], key_span:List[int], value_span:List[int]):
@@ -583,9 +592,9 @@ def parse_device_tree(file_path:Path) -> None:
                             print(f'        |{e}|')
                     continue
 
-                # TODO: grab the aliases
                 alias = re.match(r'^(&[\w]+)$', value)
                 if alias:
+                    node.add_property(key, AliasProperty(value), file_path, line_number_span, key_span, value_span)
                     if DEBUG:
                         print('alias')
                         print(f'        |{alias.groups()[0]}|')
