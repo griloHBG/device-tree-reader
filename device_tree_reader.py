@@ -312,6 +312,9 @@ class DeviceTreeNode(NodeMixin):
     def get_node_span(self):
         return self._node_span
 
+    #TODO add __getitem__ to expose properties by its names
+    #TODO add property_names to expoose all property names
+
     def __repr__(self):
         string = self.name
         if not self._at == None:
