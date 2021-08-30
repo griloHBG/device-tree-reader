@@ -80,23 +80,42 @@ class Regex:
     '''inspired by https://stackoverflow.com/a/36328890/6609908'''
 
 
+class MixinIteratorProperty(Iterator):
 
+    def __iter__(self):
+        self.iter = iter(self._value)
+        return self
 
-class StringProperty(str):
+    def __next__(self):
+        return next(self.iter)
+
+class StringProperty:
     '''string-property = "a string";'''
+    re_string = re.compile(r'^"(?P<string>[^\n;"]*)"$')
     def __init__(self, value:str):
         self._value:str = value
 
     def __repr__(self):
         return self._value
 
-class StringListProperty():
+    @classmethod
+    def from_string(cls, string: str):
+        string_property = cls.re_string.match(string)
+        if string_property:
+            return cls(string_property['string'])
+        else:
+            return None
+
+class StringListProperty(MixinIteratorProperty):
     '''string-list = "red fish", "blue fish";'''
+    re_string_list=re.compile(r'^("[^\n;"]*"\s*,\s*?)+"[^\n;"]*"$')
+    re_string_single=re.compile(r'"([^\n;"]*)"')
+
     def __init__(self, value:List[str]):
         self._value:List[str] = value
 
     def __repr__(self):
-        return self._value
+        return repr(self._value)
 
     def __getitem__(self, key:int):
         return self._value[key]
@@ -104,8 +123,18 @@ class StringListProperty():
     def __setitem__(self, key:int, value:List[str]):
         self._value[key] = value
 
-class CellProperty():
+    @classmethod
+    def from_string(cls, string: str):
+        string_list_property = cls.re_string_list.match(string)
+        if string_list_property:
+            strings = cls.re_string_single.findall(string)
+            return cls(strings)
+        else:
+            return None
+
+class CellProperty(MixinIteratorProperty):
     '''cell-property = <0xbeef 123 0xabcd1234>;'''
+    re_cell = re.compile(r'^<([^>]+)>\s*$')
     def __init__(self, value:List[Union[int, str]]):
         self._value:List[Union[int, str]] = value
 
@@ -118,8 +147,34 @@ class CellProperty():
     def __setitem__(self, key:int, value:List[Union[int, str]]):
         self._value[key] = value
 
-class BinaryProperty(List[int]):
+    @classmethod
+    def from_string(cls, string: str):
+        cell = cls.re_cell.match(string)
+        if cell:
+            # TODO: maybe remember (store somewhere) if an integer value was represented as hexa or as decimal?
+            elements = cell[1].split()
+            for i in range(len(elements)): # I want to edit elements in place
+                if elements[i][0:2] == '0x' or elements[i][0:2] == '0X':
+                    try:
+                        elements[i] = int(elements[i], 16)
+                    except:
+                        raise ValueError(f'Why is not {elements[i]} an hexa value?')
+                else:
+                    try:
+                        elements[i] = int(elements[i], 10)
+                    except ValueError:
+                        elements[i] = str(elements[i])
+                    except:
+                        # TODO: the string branch (exactly above) certainly will make this execpt never happen... is this good?
+                        raise ValueError(f'Why is not {elements[i]} a decimal or a string value?')
+
+            return cls(elements)
+        else:
+            return None
+
+class BinaryProperty(MixinIteratorProperty):
     '''binary-property = [0x01 0x23 0x45 0x67];'''
+    re_binary = re.compile(r'^\[([^\]]+)\]\s*$')
     def __init__(self, value:List[int]):
         self._value:List[int] = value
 
@@ -131,9 +186,30 @@ class BinaryProperty(List[int]):
 
     def __setitem__(self, key:int, value:List[int]):
         self._value[key] = value
-    pass
 
-class EmptyProperty():
+    @classmethod
+    def from_string(cls, string: str):
+        cell = cls.re_binary.match(string)
+        if cell:
+            # TODO: maybe remember (store somewhere) if an integer value was represented as hexa or as decimal?
+            elements = cell[1].split()
+            for i in range(len(elements)): # I want to edit elements in place
+                if elements[i][0:2] == '0x' or elements[i][0:2] == '0X':
+                    try:
+                        elements[i] = int(elements[i], 16)
+                    except:
+                        raise ValueError(f'Why is not {elements[i]} an hexa value?')
+                else:
+                    try:
+                        elements[i] = int(elements[i], 10)
+                    except:
+                            raise ValueError(f'Why is not {elements[i]} a decimal value?')
+
+            return cls(elements)
+        else:
+            return None
+
+class EmptyProperty:
     '''wakeup-source;'''
     def __init__(self):
         self.status = True
@@ -141,25 +217,73 @@ class EmptyProperty():
     def __bool__(self):
         return self.status
 
-class MixedProperty(List[Union[StringProperty, CellProperty, BinaryProperty]]):
+    # TODO: add classmethod from_string here as well as the other Property classes
+
+class MixedProperty(MixinIteratorProperty):
     '''mixed-property = "a string", [0x01 0x23 0x45 0x67], <0x12345678>;'''
+    re_mixed_property = re.compile(r'(?:(?P<cell><\s*(?:(?:\s*&)?\w+\s*)+>)|(?P<string>"(?:[^\n;"]*)"\s*)|(?P<binary>\[\s*(?:(?:(?:0[xX][\dA-Fa-f]+)|(?:\d+))\s*)+\]))')
+    def __init__(self, value:List[Union[StringProperty,
+                                        CellProperty,
+                                        BinaryProperty]] = []):
+        self._value = value
+
+    def __repr__(self):
+        return ', '.join([repr(v) for v in self._value])
+
     def get_type_info(self):
         type_list = [type(element) for element in self]
         return type_list
 
-class AliasProperty():
+    def append(self, value:Union[StringProperty,
+                                 CellProperty,
+                                 BinaryProperty]) -> None:
+        self._value.append(value)
+
+    @classmethod
+    def from_string(cls, string: str):
+        mixed_property = cls.re_mixed_property.finditer(string)
+        if mixed_property:
+            auxMixedProperty:MixedProperty = MixedProperty()
+            for p in mixed_property:
+                #TODO every property in here is being created from strings. Not good!
+                if not sum([0 if v==None else 1 for v in p.groupdict().values()]) == 1:
+                    raise ValueError(f'More than one type (string and/or cell and/or binary) found: {[f"{k}: {v}" for k,v in p.groupdict().items() if not v == None]}')
+                elif not p['cell'] == None:
+                    current_property = CellProperty.from_string(p['cell'])
+                elif not p['string'] == None:
+                    current_property = StringProperty.from_string(p['string'])
+                elif not p['binary'] == None:
+                    current_property = BinaryProperty(p['binary'])
+                else:
+                    raise f'Something is wrong! None of cell, string or binary. What is this?? value: {p[0]}'
+
+                auxMixedProperty.append(current_property)
+
+            return auxMixedProperty
+        else:
+            return None
+
+class AliasProperty:
     '''&phandle;'''
+    re_alias_property = re.compile(r'^(?P<alias>&[\w]+)$')
     def __init__(self, value:str):
         self._value:str = value
 
     def __repr__(self):
         return self._value
 
+    @classmethod
+    def from_string(cls, string: str):
+        alias_property = cls.re_alias_property.match(string)
+        if alias_property:
+            return AliasProperty(alias_property['alias'])
+        else:
+            return None
+
 NodePropertyValue = Union[StringProperty,
                           CellProperty,
-                          BinaryProperty,
-                          MixedProperty,
                           StringListProperty,
+                          BinaryProperty,
                           MixedProperty,
                           EmptyProperty,
                           AliasProperty]
@@ -205,7 +329,7 @@ class DeviceTreeNodeProperty:
         return self._history_list
 
     def __repr__(self):
-        return f'{self.name} - {self._value}'
+        return f'{self.name} : {self._value}'
 
 # TODO: DeviceTree class? to register all phandles & nodes, all source files & nodes, ...
 
@@ -512,11 +636,10 @@ def parse_device_tree(file_path:Path) -> None:
             line_number_offset = get_line_number(contents[:carret_position-1])
             '''curernt line number in our analysis'''
 
-            DEBUG = True
             if DEBUG:
                 w=20
                 print(f'{line_number_offset:{w-10}} {node.name:{w}} {properties_lines[:10]:{w}}')
-            DEBUG=False
+
             '''a big problem: some lengthy properties (like cell properties) usually are broken in several lines'''
 
             #properties_lines = re.sub(r'/\*[^*/]*\*/','', properties_lines) # removing multiline comments
@@ -533,34 +656,36 @@ def parse_device_tree(file_path:Path) -> None:
             key_value_property:Iterator[re.Match[AnyStr]] = re.finditer(r'(?P<key>[\w,.+?#\-]+)\s*=\s*(?P<value>[^;]+);', properties_lines)
             '''this a property like <key = value>, regardless of being spread in more than on line or note'''
 
+            DEBUG=True
+
             for property_match in key_value_property:
                 key = property_match['key']
+                # TODO: use slice?
                 key_span = [property_match.start('key')+carret_position, property_match.end('key')+carret_position]
                 value = property_match['value']
+                # TODO: use slice?
                 value_span = [property_match.start('value')+carret_position, property_match.end('value')+carret_position]
                 line_number_span = [line_number_offset + get_line_number(properties_lines[:property_match.start('key')]) -1,
                                     line_number_offset + get_line_number(properties_lines[:property_match.end('value')-1]) -1]
                 if DEBUG:
-                    print(f'key  : %{key}%')
-                    print(f'value: %{value}%')
+                    print(f'key  : _{key}_')
+                    print(f'value: _{value}_')
 
-                string_property = re.match(r'^"([^\n;"]*)"$', value)
+                string_property = StringProperty.from_string(value)
                 if string_property:
-                    if DEBUG:
-                        print('single string', value)
-                        print(f'        |{string_property.groups()[0]}| span: {value_span}, line: {line_number_offset}')
+                    print('single string', value)
+                    print(f'        |{string_property}| span: {value_span}, line: {line_number_offset}')
 
-                    node.add_property(key, value, file_path, line_number_span, key_span, value_span)
+                    node.add_property(key, string_property, file_path, line_number_span, key_span, value_span)
                     continue
 
-                string_list = re.match(r'^("[^\n;"]*"\s*,\s*?)+"[^\n;"]*"$', value)
-                if string_list:
-                    strings = re.findall(r'"([^\n;"]*)"', value)
-                    node.add_property(key, StringProperty(strings), file_path, line_number_span, key_span, value_span)
+                string_list_property = StringListProperty.from_string(value)
+                if string_list_property:
                     if DEBUG:
                         print('multi string')
-                        for s in strings:
+                        for s in string_list_property:
                             print(f'        |{s}|')
+                    node.add_property(key, string_list_property, file_path, line_number_span, key_span, value_span)
                     continue
 
                 # cell = re.match(r'^<\s*((?:&?[\w]+\s*)+)>$', value) # this one causes catastrophic backtracking for, e.g., "<0x00010081 0x00000000 0x04000000 0x00000000 0x04000040 0x00000000>, <0>"
@@ -570,59 +695,28 @@ def parse_device_tree(file_path:Path) -> None:
                 # my solution: according to https://javascript.info/regexp-catastrophic-backtracking#how-to-fix (great article. a little hard to understand backtracking btw :) )
                 # cell = re.match(r'^<\s*(?:(?:&?[\w]+\s+)+&?[\w]+\s*)>$', value) # this one causes catastrophic backtracking for, e.g., "<0x00010081 0x00000000 0x04000000 0x00000000 0x04000040 0x00000000>, <0>"
                 # simplifying:
-                cell = re.match(r'^<([^>]+)>\s*$', value)
+                cell = CellProperty.from_string(value)
 
                 if cell:
-                    # TODO: maybe remember (store somewhere) if an integer value was represented as hexa or as decimal?
-                    elements = cell[1].split()
-                    for i in range(len(elements)):
-                        if elements[i][0:2] == '0x' or elements[i][0:2] == '0X':
-                            elements[i] = int(elements[i], 16)
-                        else:
-                            try:
-                                elements[i] = int(elements[i], 10)
-                            except ValueError:
-                                elements[i] = str(elements[i])
-                            except:
-                                raise ValueError(f'It is not an hexa int, dec int, nor str... WHAT IS THIS? Value: {elements[i]}')
-
-                    node.add_property(key, CellProperty(elements), file_path, line_number_span, key_span, value_span)
+                    node.add_property(key, cell, file_path, line_number_span, key_span, value_span)
                     if DEBUG:
                         print('cell')
-                        for e in elements:
+                        for e in cell:
                             print(f'        |{e}|')
                     continue
 
-                alias = re.match(r'^(&[\w]+)$', value)
+                alias = AliasProperty.from_string(value)
                 if alias:
                     node.add_property(key, AliasProperty(value), file_path, line_number_span, key_span, value_span)
                     if DEBUG:
                         print('alias')
-                        print(f'        |{alias.groups()[0]}|')
+                        print(f'        |{alias}|')
                     continue
 
                 #mixed_property = re.finditer(r'(?:(?P<cell><\s*(?:(?:\s*&)?\w+\s*)+>)|(?P<string>"(?:[^\n;"]*)"\s*)|(?P<string_list>(?:"[^\n;"]*"\s*,\s*?)+"[^\n;"]*")|(?P<binary>\[\s*(?:(?:(?:0[xX][\dA-Fa-f]+)|(?:\d+))\s*)+\]))', value)
-                mixed_property = re.finditer(r'(?:(?P<cell><\s*(?:(?:\s*&)?\w+\s*)+>)|(?P<string>"(?:[^\n;"]*)"\s*)|(?P<binary>\[\s*(?:(?:(?:0[xX][\dA-Fa-f]+)|(?:\d+))\s*)+\]))',
-                                             value)
+                mixed_property = MixedProperty.from_string(value)
                 if mixed_property:
-                    auxMixedProperty:MixedProperty = MixedProperty()
-                    current_property = None
-                    for p in mixed_property:
-                        #TODO every property in here is being created from strings. Not good!
-                        if sum([0 if v==None else 1 for v in p.groupdict().values()]) > 1:
-                            raise ValueError(f'More than one type (string and/or cell and/or binary) found: {[f"{k}: {v}" for k,v in p.groupdict().items() if not v == None]}')
-                        elif not p['cell'] == None:
-                            current_property = CellProperty([p['cell']])
-                        elif not p['string'] == None:
-                            current_property = StringProperty(p['string'])
-                        elif not p['binary'] == None:
-                            current_property = BinaryProperty(p['binary'])
-                        else:
-                            raise f"Something is wrong! None of cell, string or binary. What is this?? value: {p[0]}"
-
-                        auxMixedProperty.append(current_property)
-
-                    node.add_property(key, auxMixedProperty, file_path, line_number_span, key_span, value_span)
+                    node.add_property(key, mixed_property, file_path, line_number_span, key_span, value_span)
                     continue
 
                 raise ValueError(f'''
@@ -631,7 +725,6 @@ def parse_device_tree(file_path:Path) -> None:
                    Current carret: {carret_position}
                    Current content: {property_match[0]}')
                    ''')
-            DEBUG=False
 
             empty_property:Iterator[re.Match[str]] = re.finditer(r'\n\s*(?P<property_name>[\w,.+?#\-]+);', properties_lines)
             '''it is an empty property (like wakeup-source)'''
@@ -645,6 +738,7 @@ def parse_device_tree(file_path:Path) -> None:
                 line_number_span = [line_number_offset + get_line_number(properties_lines[:property_match.start('property_name')]) -1,
                                     line_number_offset + get_line_number(properties_lines[:property_match.end('property_name')-1]) -1]
                 node.add_property(property_name, EmptyProperty(), file_path, line_number_span, property_span, property_span)
+            DEBUG=False
 
 
     for rn in root_nodes:
