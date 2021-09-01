@@ -1,0 +1,3 @@
+[submodule "find_in_devicetree"]
+	path = find_in_devicetree
+	url = https://github.com/griloHBG/find_in_devicetree
